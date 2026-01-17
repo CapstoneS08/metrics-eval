@@ -1,0 +1,27 @@
+# Core data libraries
+pandas>=2.0.0
+numpy>=1.23.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# HuggingFace ecosystem
+transformers>=4.45.0
+datasets>=2.20.0
+accelerate>=0.30.0
+evaluate>=0.4.0
+
+# Seq2seq evaluation
+scikit-learn>=1.2.0
+
+# OpenAI (new v1 SDK)
+openai>=1.40.0
+
+# Environment variable loading
+python-dotenv>=1.0.0
+
+# Notebook support
+ipykernel>=6.0.0
+
+# UTF-8 safe CSV writing
+charset-normalizer>=3.0.0

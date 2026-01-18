@@ -1,0 +1,31 @@
+id,text,audio_path
+tx_000,Product quality is okay overall but the surface finishing is not as good as competitors.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_000.mp3
+tx_001,Sometimes the delivery driver cannot find the correct gate and we waste time guiding them in.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_001.mp3
+tx_002,"Stock availability for standard sizes is good, we seldom face out-of-stock issues.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_002.mp3
+tx_003,The sales engineer knows our project requirements well and proactively suggests alternatives when items are not available.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_003.mp3
+tx_004,"Delivery is usually on time but sometimes the second truck comes much later than promised, which affects our night shift.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_004.mp3
+tx_005,Very unhappy with the late deliveries and wrong items supplied in the last few orders.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_005.mp3
+tx_006,Sometimes calls are not returned promptly and we need to chase for updates.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_006.mp3
+tx_007,Service is excellent but we hope for more flexibility in payment terms as projects get tighter.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_007.mp3
+tx_008,"We rarely have disputes over invoiced quantities, the billing is usually accurate.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_008.mp3
+tx_009,"Invoices are clear and always match the delivery orders, no issues with billing so far.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_009.mp3
+tx_010,The service team sometimes pushes responsibility back to us instead of helping to investigate site issues.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_010.mp3
+tx_011,Deliveries are well coordinated with our crane time and they usually update us if the truck will be late.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_011.mp3
+tx_012,"We found surface rust on some ductile iron pieces upon arrival, had to reject part of the shipment.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_012.mp3
+tx_013,"We frequently encounter no stock for common items and have to wait for backorders, which affects site progress.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_013.mp3
+tx_014,Finance team is easy to deal with and they accommodate our internal processing timelines.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_014.mp3
+tx_015,There were a few wrong sizes supplied and we had to send them back for exchange.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_015.mp3
+tx_016,Casting of manhole covers is robust and passes all our load tests without issues.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_016.mp3
+tx_017,"Deliveries for standard items are very fast, usually next day after we confirm the PO.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_017.mp3
+tx_018,It sometimes feels like our smaller orders are not prioritised and we get slower responses.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_018.mp3
+tx_019,"Pipe casting quality is excellent, no defects found during inspection and dimensions are always within tolerance.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_019.mp3
+tx_020,Delivery lead time for special items is reasonable and they keep us informed on progress.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_020.mp3
+tx_021,"Recent deliveries have been consistently late by two to three days, causing rework in our project schedule.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_021.mp3
+tx_022,We sent a few emails but took a long time to get a reply on technical queries.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_022.mp3
+tx_023,Material specs sometimes do not match the drawings and we had to return a few batches last month.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_023.mp3
+tx_024,It took a long time to process a refund when we returned some unused items.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_024.mp3
+tx_025,One batch was completely missed from the delivery and only arrived after we complained.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_025.mp3
+tx_026,"Sales team is very responsive on WhatsApp and email, they follow up quickly on our RFQs and clarifications.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_026.mp3
+tx_027,Product dimensions are accurate and we have no issues fitting them on site.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_027.mp3
+tx_028,Overall we are satisfied with the product quality and the team’s responsiveness.,C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_028.mp3
+tx_029,"Customer service can be defensive when we raise site issues, we feel our concerns are not fully addressed.",C:/Users/tengc/Downloads/metrics-eval/metrics_eval/data/transcription/val/audio/tx_029.mp3

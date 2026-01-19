@@ -1,3 +1,4 @@
+# models/summarising/scripts/pipeline.py
 """
 Summarising pipeline: extract CX improvement comments from processed feedback.
 
@@ -12,19 +13,19 @@ Each JSONL line:
 
 OUTPUT:
     JSONL files saved to:
-        <this folder>/results/
+        <output_dir>/
     - cx_improvement_full.jsonl
     - cx_improvement_only.jsonl
 """
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Dict, Any, List
 
 import pandas as pd
-from openai import OpenAI
+
+from llm_router import call_llm_json
 
 
 # ---------- project / path helpers ----------
@@ -42,7 +43,7 @@ def find_project_root(start: Path) -> Path:
     return start
 
 
-# This file lives in: notebooks/summarising/cel/pipeline.py
+# This file lives in: models/summarising/scripts/pipeline.py
 HERE = Path(__file__).resolve().parent
 ROOT_DIR = find_project_root(HERE)
 
@@ -65,23 +66,9 @@ RULES:
 """.strip()
 
 
-# ---------- OpenAI helper ----------
+# ---------- LLM helper (provider-agnostic) ----------
 
-def get_openai_client() -> OpenAI:
-    """
-    Create an OpenAI client. Requires OPENAI_API_KEY in env.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set in the environment.")
-    return OpenAI(api_key=api_key)
-
-
-def get_json_improvement(
-    text: str,
-    client: OpenAI,
-    model: str = "gpt-4.1-mini",
-) -> Dict[str, Any]:
+def get_json_improvement(text: str, model: str) -> Dict[str, Any]:
     """
     Call the LLM and return {"improvement_comment": "..."}.
 
@@ -92,23 +79,16 @@ def get_json_improvement(
         return {"improvement_comment": "NONE"}
 
     try:
-        resp = client.responses.create(
-            model=model,
-            instructions=SYSTEM_PROMPT,
-            input=text.strip(),
-        )
-        raw = resp.output_text.strip()
+        data = call_llm_json(text=text.strip(), system_prompt=SYSTEM_PROMPT, model=model)
 
-        # Try parse as JSON; otherwise wrap in JSON
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = {"improvement_comment": raw}
+        # Normalize to expected schema
+        if not isinstance(data, dict) or "improvement_comment" not in data:
+            return {"improvement_comment": "ERROR"}
 
-        if "improvement_comment" not in data:
-            data = {"improvement_comment": "ERROR"}
-
-        return data
+        val = str(data.get("improvement_comment", "")).strip()
+        if not val:
+            return {"improvement_comment": "ERROR"}
+        return {"improvement_comment": val}
 
     except Exception as e:
         print("ERROR in get_json_improvement:", e)
@@ -133,14 +113,18 @@ def load_input_df(path: Path) -> pd.DataFrame:
     if suffix in [".jsonl", ".json"]:
         df = pd.read_json(path, lines=True)
     elif suffix in [".xlsx", ".xls"]:
-        # fallback if someone passes Excel directly
         df = pd.read_excel(path)
     else:
         raise ValueError(f"Unsupported input format: {suffix}")
 
     lower_map = {c.lower(): c for c in df.columns}
     id_col = lower_map.get("comment_id") or lower_map.get("id")
-    text_col = lower_map.get("comment") or lower_map.get("text") or lower_map.get("message")
+    text_col = (
+        lower_map.get("comment")
+        or lower_map.get("raw_text")  # ✅ important for your synth inputs
+        or lower_map.get("text")
+        or lower_map.get("message")
+    )
 
     if id_col is None or text_col is None:
         raise ValueError(
@@ -179,7 +163,6 @@ def run_summarising_pipeline(
         df = df.head(max_rows)
         print(f"TEST_MODE=True → processing first {len(df)} rows only")
 
-    client = get_openai_client()
     results: List[Dict[str, Any]] = []
 
     for idx, row in df.iterrows():
@@ -189,20 +172,20 @@ def run_summarising_pipeline(
         print(f"\n--- Row {idx} (Comment_ID={comment_id}) ---")
         print("Input:", text)
 
-        output_json = get_json_improvement(text, client=client, model=model)
+        output_json = get_json_improvement(text, model=model)
         print("JSON output:", output_json)
 
         results.append(
             {
-                "Comment_ID": int(comment_id) if pd.notna(comment_id) else None,
+                "Comment_ID": str(comment_id) if pd.notna(comment_id) else None,  # <- keep string IDs
                 "Comment": str(text) if pd.notna(text) else "",
+                "model": model,
                 "model_output": {
-                    "improvement_comment": str(
-                        output_json.get("improvement_comment", "")
-                    )
+                    "improvement_comment": str(output_json.get("improvement_comment", ""))
                 },
             }
         )
+
 
         if sleep_sec > 0:
             time.sleep(sleep_sec)
@@ -211,8 +194,7 @@ def run_summarising_pipeline(
     improvement_only: List[Dict[str, Any]] = [
         r
         for r in results
-        if r["model_output"]["improvement_comment"]
-        not in ["NONE", "ERROR", ""]
+        if r["model_output"]["improvement_comment"] not in ["NONE", "ERROR", ""]
     ]
 
     # ---- Save JSONL ----
@@ -231,10 +213,7 @@ def run_summarising_pipeline(
     print(f"  - All rows:      {full_file}")
     print(f"  - Improvements:  {only_file}")
 
-    return {
-        "full": full_file,
-        "only": only_file,
-    }
+    return {"full": full_file, "only": only_file}
 
 
 if __name__ == "__main__":

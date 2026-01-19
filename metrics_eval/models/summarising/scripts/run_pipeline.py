@@ -1,3 +1,4 @@
+# models/summarising/scripts/run_pipeline.py
 """
 CLI wrapper for the summarising pipeline.
 
@@ -5,8 +6,9 @@ Default input:
   <root>/data/processed/summarising/summarising_input.jsonl
 
 Usage examples (from project root):
-  python notebooks/summarising/cel/run_pipeline.py
-  python notebooks/summarising/cel/run_pipeline.py --full
+  python models/summarising/scripts/run_pipeline.py
+  python models/summarising/scripts/run_pipeline.py --full --model gpt-4.1-mini
+  python models/summarising/scripts/run_pipeline.py --full --model claude-sonnet-3-5
 """
 
 import argparse
@@ -44,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="gpt-4.1-mini",
-        help="Model name for OpenAI Responses API.",
+        help='Model name (OpenAI: "gpt-...", Claude: "claude-...").',
     )
     parser.add_argument(
         "--sleep",

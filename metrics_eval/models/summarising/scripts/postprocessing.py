@@ -21,15 +21,15 @@ sends them to an LLM, and returns + optionally saves a JSON summary:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Dict, Any, Iterable, List, Optional
 
 import pandas as pd
 from dotenv import load_dotenv
-from openai import OpenAI
 
-load_dotenv()  # so it picks up OPENAI_API_KEY from your .env
+from llm_router import call_llm_json
+
+load_dotenv()  # picks up OPENAI_API_KEY / ANTHROPIC_API_KEY from your .env
 
 
 HERE = Path(__file__).resolve().parent
@@ -91,13 +91,6 @@ Do not include any text before or after the JSON.
 """.strip()
 
 
-def get_openai_client() -> OpenAI:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set in the environment.")
-    return OpenAI(api_key=api_key)
-
-
 def _build_input_text(improvements: Iterable[str]) -> str:
     """
     Turn a list of improvement sentences into a numbered block of text
@@ -105,7 +98,7 @@ def _build_input_text(improvements: Iterable[str]) -> str:
     """
     lines: List[str] = []
     for i, s in enumerate(improvements, start=1):
-        s = s.strip()
+        s = str(s).strip()
         if not s:
             continue
         lines.append(f"{i}. {s}")
@@ -130,7 +123,7 @@ def aggregate_from_df(
     improvement_col : str
         Name of the column with improvement sentences.
     model : str
-        OpenAI model name.
+        Model name (OpenAI: "gpt-...", Claude: "claude-...").
     max_items : Optional[int]
         If set, only the first `max_items` non-empty, non-NONE/ERROR comments are used.
     save_path : Optional[Path]
@@ -159,24 +152,22 @@ def aggregate_from_df(
 
     input_text = _build_input_text(improvements)
 
-    client = get_openai_client()
-    resp = client.responses.create(
-        model=model,
-        instructions=AGGREGATION_SYSTEM_PROMPT,
-        input=input_text,
-    )
-
-    raw = resp.output_text.strip()
-
     try:
-        agg = json.loads(raw)
-    except json.JSONDecodeError as e:
-        # If JSON parsing fails, optionally save raw text for debugging
+        agg = call_llm_json(
+            text=input_text,
+            system_prompt=AGGREGATION_SYSTEM_PROMPT,
+            model=model,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Aggregation LLM call failed: {e}")
+
+    if not isinstance(agg, dict) or "categories" not in agg or "summary_overall" not in agg:
+        # Save raw-ish output for debugging if requested
         if save_path is not None:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             with save_path.open("w", encoding="utf-8") as f:
-                f.write(raw)
-        raise RuntimeError(f"Failed to parse aggregation JSON: {e}\nRaw:\n{raw}")
+                f.write(json.dumps({"error": "invalid_structure", "output": agg}, ensure_ascii=False, indent=2))
+        raise RuntimeError(f"Aggregation returned invalid JSON structure: {agg}")
 
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)

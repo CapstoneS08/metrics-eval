@@ -1,10 +1,7 @@
 """
 Issue tracking LLM pipeline for Ecoplus.
 
-Takes WhatsApp-style client messages (JSONL) and turns each into a
-single issue row in Ecoplus' template.
-
-Input file schema (one JSON object per line):
+Input schema (WhatsApp-style JSONL; one JSON object per line):
 - chat_id
 - message_id
 - timestamp
@@ -12,20 +9,21 @@ Input file schema (one JSON object per line):
 - sender_name
 - message_text
 
-Output: DataFrame + JSONL + CSV with original fields + issue fields.
+Output:
+- DataFrame returned
+- JSONL + CSV saved to output_dir with original fields + issue fields + debug fields
 """
 
 from __future__ import annotations
 
 import json
-import os
 import time
-from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from openai import OpenAI
+
+from llm_router import call_llm_json
 
 
 # --------- Config ---------
@@ -37,6 +35,7 @@ ISSUE_CATEGORIES = [
     "Service Issues",
     "Fulfilment Error",
     "Payments",
+    "Other",
 ]
 
 RESOLUTION_SCORES = [
@@ -44,6 +43,29 @@ RESOLUTION_SCORES = [
     "Satisfied",
     "Neutral",
     "Dissatisfied",
+]
+
+OUTPUT_KEYS = [
+    "issue",
+    "customer",
+    "created_by",
+    "created_at",
+    "to_inform",
+    "assigned_to",
+    "resolved_at",
+    "status_to_close",
+    "closed_at",
+    "resolution_score",
+    "comments",
+]
+
+REQUIRED_INPUT_COLS = [
+    "chat_id",
+    "message_id",
+    "timestamp",
+    "sender_number",
+    "sender_name",
+    "message_text",
 ]
 
 SYSTEM_PROMPT = """
@@ -66,7 +88,7 @@ CRITICAL RULES:
 - Do NOT invent specific dates or times that are not given.
 - If a field cannot be inferred from the message, use an empty string "".
 - Do NOT make up specific person names (Andy, Darren, etc.).
-- Use generic roles (e.g. "AM", "Cust Svc", "Purchase", "Site") where needed.
+- Use generic roles (e.g. "AM", "Cust Svc", "Purchase", "Finance", "Site") where needed.
 - Keep strings short and suitable for a table cell.
 
 The JSON object MUST have exactly these keys:
@@ -74,13 +96,11 @@ The JSON object MUST have exactly these keys:
 - "issue": one of the following categories
   ["Delivery Delay", "Product Quality", "Stock Issues",
    "Service Issues", "Fulfilment Error", "Payments", "Other"].
-  Pick the best fit, or "Other" if none apply.
 
 - "customer": short name for the customer, usually from sender_name.
-  Example: "ABC Engineering", "Hock Seng Trading".
 
 - "created_by": who raised the issue.
-  For WhatsApp client messages, use "Customer" or empty string "".
+  For WhatsApp client messages, use "Customer" or "".
 
 - "created_at": when the issue was raised.
   For WhatsApp messages, you may copy the timestamp string or leave "".
@@ -91,7 +111,6 @@ The JSON object MUST have exactly these keys:
 
 - "assigned_to": the primary role that should handle this issue.
   Use roles like "AM", "Cust Svc", "Purchase", "Finance", "Site".
-  Example: "Cust Svc" for delivery/complaint issues.
 
 - "resolved_at": keep as "" (WhatsApp messages alone cannot tell this).
 
@@ -105,209 +124,191 @@ The JSON object MUST have exactly these keys:
 
 - "comments": a short internal note (1–2 lines) summarising
   what Ecoplus needs to do or follow up.
-  Example: "Customer chasing for delivery ETA; inform driver and update customer."
 
 Ensure the JSON is syntactically valid and can be parsed by json.loads().
-"""
+""".strip()
 
 
-@dataclass
-class IssueTrackingResult:
-    # original fields
-    chat_id: str
-    message_id: str
-    timestamp: str
-    sender_number: str
-    sender_name: str
-    message_text: str
+# --------- Paths ---------
 
-    # model outputs
-    issue: Optional[str] = None
-    customer: Optional[str] = None
-    created_by: Optional[str] = None
-    created_at: Optional[str] = None
-    to_inform: Optional[str] = None
-    assigned_to: Optional[str] = None
-    resolved_at: Optional[str] = None
-    status_to_close: Optional[str] = None
-    closed_at: Optional[str] = None
-    resolution_score: Optional[str] = None
-    comments: Optional[str] = None
-
-    # plumbing / debugging
-    raw_model_output: Optional[str] = None
-    error: Optional[str] = None
+def find_project_root(start: Path) -> Path:
+    cur = start
+    for _ in range(8):
+        if (cur / "data").exists():
+            return cur
+        cur = cur.parent
+    return start
 
 
-# --------- OpenAI client helper ---------
+HERE = Path(__file__).resolve().parent
+ROOT = find_project_root(HERE)
 
-def get_openai_client() -> OpenAI:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set in the environment. "
-            "Set it or load it from a .env file before running the pipeline."
-        )
-    return OpenAI(api_key=api_key)
+INPUT_PATH_DEFAULT = ROOT / "data" / "issue_tracking" / "val" / "claude_48.jsonl"
+OUTPUT_DIR_DEFAULT = (ROOT / "models" / "issue_tracking" / "results")
 
 
-# --------- Core LLM call ---------
+# --------- Helpers ---------
 
-def call_issue_model(
-    client: OpenAI,
-    row: pd.Series,
-    model: str = "gpt-4.1-mini",
-    max_retries: int = 3,
-    retry_sleep: float = 2.0,
-) -> IssueTrackingResult:
+def _ensure_output_keys(d: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Call the LLM for a single message row, and parse into IssueTrackingResult.
+    Enforce EXACT output keys. Missing -> "", extra keys dropped.
     """
+    out: Dict[str, Any] = {}
+    for k in OUTPUT_KEYS:
+        v = d.get(k, "")
+        out[k] = "" if v is None else str(v)
+    return out
 
-    base = IssueTrackingResult(
-        chat_id=str(row.get("chat_id", "")),
-        message_id=str(row.get("message_id", "")),
-        timestamp=str(row.get("timestamp", "")),
-        sender_number=str(row.get("sender_number", "")),
-        sender_name=str(row.get("sender_name", "")),
-        message_text=str(row.get("message_text", "")),
-    )
 
-    payload = {
-        "chat_id": base.chat_id,
-        "message_id": base.message_id,
-        "timestamp": base.timestamp,
-        "sender_number": base.sender_number,
-        "sender_name": base.sender_name,
-        "message_text": base.message_text,
-    }
+def schema_ok(d: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Non-expert schema validation:
+    - exact keys present (at least required ones)
+    - enums valid where applicable
+    """
+    missing = [k for k in OUTPUT_KEYS if k not in d]
+    if missing:
+        return False, missing
 
+    bad: List[str] = []
+    issue = str(d.get("issue", "")).strip()
+    if issue and issue not in ISSUE_CATEGORIES:
+        bad.append("issue")
+
+    rs = str(d.get("resolution_score", "")).strip()
+    if rs and rs not in RESOLUTION_SCORES:
+        bad.append("resolution_score")
+
+    return (len(bad) == 0), bad
+
+
+def load_input_df(input_path: Path) -> pd.DataFrame:
+    """
+    Loads WhatsApp JSONL and checks required columns exist.
+    """
+    input_path = Path(input_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+
+    df = pd.read_json(input_path, lines=True)
+
+    missing = [c for c in REQUIRED_INPUT_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(f"Input file is missing required columns: {missing}")
+
+    return df
+
+
+def call_issue_model(payload: Dict[str, Any], *, model: str, max_retries: int = 3, retry_sleep: float = 2.0) -> Dict[str, Any]:
+    """
+    Provider-agnostic via llm_router. Returns dict or {"_error": "..."}.
+    """
     last_error: Optional[str] = None
-
     for attempt in range(1, max_retries + 1):
         try:
-            resp = client.chat.completions.create(
+            data = call_llm_json(
+                text=json.dumps(payload, ensure_ascii=False),
+                system_prompt=SYSTEM_PROMPT,
                 model=model,
-                temperature=0,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Convert this WhatsApp message into the required JSON:\n\n"
-                            + json.dumps(payload, ensure_ascii=False)
-                        ),
-                    },
-                ],
             )
-            content = resp.choices[0].message.content or ""
-            base.raw_model_output = content
-
-            # Try to parse JSON
-            parsed = json.loads(content)
-
-            # Map fields safely
-            base.issue = parsed.get("issue")
-            base.customer = parsed.get("customer")
-            base.created_by = parsed.get("created_by")
-            base.created_at = parsed.get("created_at")
-            base.to_inform = parsed.get("to_inform")
-            base.assigned_to = parsed.get("assigned_to")
-            base.resolved_at = parsed.get("resolved_at")
-            base.status_to_close = parsed.get("status_to_close")
-            base.closed_at = parsed.get("closed_at")
-            base.resolution_score = parsed.get("resolution_score")
-            base.comments = parsed.get("comments")
-
-            base.error = None
-            return base
-
-        except Exception as e:  # noqa: BLE001
+            if not isinstance(data, dict):
+                return {"_error": "NON_DICT_OUTPUT", "_raw": str(data)}
+            return data
+        except Exception as e:
             last_error = f"Attempt {attempt} failed: {e}"
             time.sleep(retry_sleep)
 
-    base.error = last_error or "Unknown error"
-    return base
+    return {"_error": last_error or "Unknown error"}
 
 
-# --------- Pipeline runner ---------
+# --------- Runner ---------
 
 def run_issue_tracking_pipeline(
-    input_path: Path,
-    output_dir: Path,
-    model: str = "gpt-4.1-mini",
+    input_path: Path = INPUT_PATH_DEFAULT,
+    output_dir: Path = OUTPUT_DIR_DEFAULT,
+    model: str = "gpt-5",
     test_mode: bool = True,
     max_rows: int = 30,
     sleep_sec: float = 0.0,
 ) -> pd.DataFrame:
     """
-    Run the issue-tracking pipeline on a JSONL file of WhatsApp messages.
+    Run issue tracking pipeline on WhatsApp JSONL.
 
-    Parameters
-    ----------
-    input_path : Path
-        Path to JSONL file with WhatsApp-style client messages.
-    output_dir : Path
-        Directory where results (JSONL + CSV) will be saved.
-    model : str
-        OpenAI model name.
-    test_mode : bool
-        If True, only process the first `max_rows` rows.
-    max_rows : int
-        Number of rows to process in test_mode.
-    sleep_sec : float
-        Optional sleep between API calls to be gentle on rate limits.
+    Saves:
+    - issue_tracking_results_<model>.jsonl
+    - issue_tracking_results_<model>.csv
     """
-
     input_path = Path(input_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
     print(f"Reading input from: {input_path}")
-    df = pd.read_json(input_path, lines=True)
-
-    required_cols = [
-        "chat_id",
-        "message_id",
-        "timestamp",
-        "sender_number",
-        "sender_name",
-        "message_text",
-    ]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"Input file is missing required columns: {missing}")
+    df = load_input_df(input_path)
 
     if test_mode:
         df = df.head(max_rows)
         print(f"TEST_MODE=True → processing first {len(df)} rows only")
 
-    client = get_openai_client()
+    records: List[Dict[str, Any]] = []
 
-    results: List[Dict[str, Any]] = []
     for i, row in df.iterrows():
-        print(f"[{i+1}/{len(df)}] Processing message_id={row['message_id']} ...")
-        result_obj = call_issue_model(client, row, model=model)
-        results.append(asdict(result_obj))
+        payload = {
+            "chat_id": str(row.get("chat_id", "")),
+            "message_id": str(row.get("message_id", "")),
+            "timestamp": str(row.get("timestamp", "")),
+            "sender_number": str(row.get("sender_number", "")),
+            "sender_name": str(row.get("sender_name", "")),
+            "message_text": str(row.get("message_text", "")),
+        }
+
+        print(f"[{i+1}/{len(df)}] Processing message_id={payload['message_id']} ...")
+
+        out = call_issue_model(payload, model=model)
+
+        # Normalize / validate
+        if "_error" not in out:
+            out = _ensure_output_keys(out)
+            ok, bad_fields = schema_ok(out)
+        else:
+            ok, bad_fields = (False, ["_error"])
+
+        rec = payload.copy()
+        rec.update({
+            "model": model,
+            "raw_model_output": json.dumps(out, ensure_ascii=False),
+            "schema_ok": bool(ok),
+            "schema_bad_fields": bad_fields,
+            "error": out.get("_error", "") if isinstance(out, dict) else "UNKNOWN_ERROR",
+        })
+
+        # explode issue fields for easy CSV filtering
+        if isinstance(out, dict) and "_error" not in out:
+            for k in OUTPUT_KEYS:
+                rec[k] = out.get(k, "")
+        else:
+            for k in OUTPUT_KEYS:
+                rec[k] = ""
+
+        records.append(rec)
 
         if sleep_sec > 0:
             time.sleep(sleep_sec)
 
-    result_df = pd.DataFrame(results)
+    out_df = pd.DataFrame(records)
 
-    # Save outputs
-    model_safe = model.replace(".", "_").replace("-", "_")
+    model_safe = model.replace("/", "_").replace(".", "_").replace("-", "_")
     jsonl_out = output_dir / f"issue_tracking_results_{model_safe}.jsonl"
     csv_out = output_dir / f"issue_tracking_results_{model_safe}.csv"
 
     print(f"Writing JSONL to: {jsonl_out}")
-    result_df.to_json(jsonl_out, orient="records", lines=True, force_ascii=False)
+    out_df.to_json(jsonl_out, orient="records", lines=True, force_ascii=False)
 
     print(f"Writing CSV to: {csv_out}")
-    result_df.to_csv(csv_out, index=False)
+    out_df.to_csv(csv_out, index=False)
 
     print("Done.")
-    return result_df
+    return out_df
+
+
+if __name__ == "__main__":
+    run_issue_tracking_pipeline(test_mode=True)

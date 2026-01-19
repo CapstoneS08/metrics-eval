@@ -8,57 +8,63 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)
 
-# What experts fill (your “metrics” columns)
-EXPERT_COLS = [
-    "Schema_Validity (Y/N)",
-    "Issue_Validity (Y/N)",
-    "Overall_Issue_Accuracy (Y/N)",
-    "Notes",
+ISSUE_FIELDS = [
+    "issue",
+    "customer",
+    "created_by",
+    "created_at",
+    "to_inform",
+    "assigned_to",
+    "resolved_at",
+    "status_to_close",
+    "closed_at",
+    "resolution_score",
+    "comments",
 ]
 
-# Field-level checks (optional but useful)
-FIELD_COLS = [
-    "issue_field_ok (Y/N/NA)",
-    "customer_field_ok (Y/N/NA)",
-    "to_inform_field_ok (Y/N/NA)",
-    "assigned_to_field_ok (Y/N/NA)",
-    "status_to_close_field_ok (Y/N/NA)",
-    "resolution_score_field_ok (Y/N/NA)",
-    "comments_field_ok (Y/N/NA)",
+META_COLS = [
+    "message_id",
+    "chat_id",
+    "timestamp",
+    "sender_name",
+    "message_text",
 ]
-
 
 def sample_df(df: pd.DataFrame, n: int) -> pd.DataFrame:
     if len(df) <= n:
         return df.copy()
     return df.sample(n=n, random_state=RANDOM_SEED).copy()
 
+def _pack_output(row: pd.Series) -> str:
+    packed = {k: row.get(k, "") for k in ISSUE_FIELDS}
+    return str(packed)
 
-def make_sheet(df: pd.DataFrame, output_col: str) -> pd.DataFrame:
+def build_expert_sheet(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
-    # compact JSON-like output column (so experts see structured fields)
-    # we keep only the important output fields in one string
-    def _pack(row):
-        keys = ["issue","customer","to_inform","assigned_to","status_to_close","resolution_score","comments"]
-        packed = {k: row.get(k, "") for k in keys}
-        return str(packed)
+    # Ensure meta cols exist
+    for c in META_COLS:
+        if c not in out.columns:
+            out[c] = ""
 
-    out[output_col] = out.apply(_pack, axis=1)
+    out["output_json"] = out.apply(_pack_output, axis=1)
 
-    keep = ["message_id", "sender_name", "message_text", output_col]
-    keep = [c for c in keep if c in out.columns]
-    out = out[keep].rename(columns={"message_text": "input"})
+    # Rename message_text to input
+    out = out.rename(columns={"message_text": "input"})
 
-    for c in EXPERT_COLS[:-1]:  # all except Notes (add later)
-        out[c] = ""
+    base_cols = ["message_id", "chat_id", "timestamp", "sender_name", "input", "output_json"]
+    out = out[base_cols]
 
-    for c in FIELD_COLS:
-        out[c] = ""
+    # Expert-only metrics (schema validity removed)
+    out["Issue_Validity (Y/N)"] = ""
+    out["Overall_Issue_Accuracy (Y/N)"] = ""
+
+    # Field-level accuracy (Metric 3)
+    for f in ISSUE_FIELDS:
+        out[f"{f}_ok (Y/N/NA)"] = ""
 
     out["Notes"] = ""
     return out
-
 
 def export_workbook(
     *,
@@ -68,23 +74,30 @@ def export_workbook(
     sample_n: int = 40,
 ):
     wb = Workbook()
+
     ws = wb.active
     ws.title = "ReadMe"
 
     lines = [
         "Issue Tracking Expert Validation",
         "",
-        "Each sheet contains outputs from ONE model on the same task.",
-        "Fill Schema_Validity / Issue_Validity / Overall_Issue_Accuracy with Y or N.",
+        "Experts: Please fill ONLY these metrics:",
+        "2) Issue Validity (%): Issue_Validity == Y",
+        "3) Field-level Accuracy (%): each <field>_ok == Y (ignore NA)",
+        "4) Overall Issue Accuracy (%): Overall_Issue_Accuracy == Y",
         "",
-        "Field-level columns: mark Y if correct, N if incorrect, NA if not inferable from input.",
-        "Notes: optional comments.",
+        "NOTE: Schema Validity (%) is computed automatically (not expert-filled).",
+        "",
+        "Instructions:",
+        "- Use Y/N for Issue_Validity and Overall_Issue_Accuracy.",
+        "- Use Y/N/NA for each field column (NA if not inferable from input).",
+        "- Do not edit input/output columns.",
     ]
     for i, line in enumerate(lines, start=1):
         ws.cell(row=i, column=1, value=line)
 
-    gpt_sheet = make_sheet(sample_df(gpt_df, sample_n), output_col="output_gpt")
-    claude_sheet = make_sheet(sample_df(claude_df, sample_n), output_col="output_claude")
+    gpt_sheet = build_expert_sheet(sample_df(gpt_df, sample_n))
+    claude_sheet = build_expert_sheet(sample_df(claude_df, sample_n))
 
     ws_gpt = wb.create_sheet("GPT")
     for r in dataframe_to_rows(gpt_sheet, index=False, header=True):
